@@ -44,52 +44,60 @@ class TaxonomyDb(object):
         load_merged=None,
         scientific_names_only=None,
     ):
-        if tax_dir:
-            gis_paths = [maybe_compressed(join(tax_dir, 'gi_taxid_nucl.dmp')),
-                         maybe_compressed(join(tax_dir, 'gi_taxid_prot.dmp'))]
-            nodes_path = maybe_compressed(join(tax_dir, 'nodes.dmp'))
-            names_path = maybe_compressed(join(tax_dir, 'names.dmp'))
-            merged_path = maybe_compressed(join(tax_dir, 'merged.dmp'))
-        self.gis_paths = gis_paths
-        self.nodes_path = nodes_path
-        self.names_path = names_path
-        self.merged_path = merged_path
         if load_gis:
             if gis:
                 self.gis = gis
-            elif gis_paths:
-                self.gis = {}
-                for gi_path in gis_paths:
-                    start_time = time.time()
-                    log.info('Loading taxonomy gis: %s', gi_path)
-                    self.gis.update(self.load_gi_single_dmp(gi_path))
-                    log.info('Loaded gi mapping: %.2fs', time.time() - start_time)
+            else:
+                if tax_dir:
+                    self.gis_paths = [maybe_compressed(join(tax_dir, 'gi_taxid_nucl.dmp')),
+                                maybe_compressed(join(tax_dir, 'gi_taxid_prot.dmp'))]
+                self.gis_paths = gis_paths or self.gis_paths
+                if self.gis_paths:
+                    self.gis = {}
+                    for gi_path in gis_paths:
+                        start_time = time.time()
+                        log.info('Loading taxonomy gis: %s', gi_path)
+                        self.gis.update(self.load_gi_single_dmp(gi_path))
+                        log.info('Loaded gi mapping: %.2fs', time.time() - start_time)
         if load_nodes:
             if nodes:
                 self.ranks, self.parents = nodes
-            elif nodes_path:
-                start_time = time.time()
-                log.info('Loading taxonomy nodes: %s', nodes_path)
-                self.ranks, self.parents = self.load_nodes(nodes_path)
-                log.info('Loaded taxonomy nodes: %.2fs', time.time() - start_time)
+            else:
+                if tax_dir:
+                    self.nodes_path = maybe_compressed(join(tax_dir, 'nodes.dmp'))
+                self.nodes_path = nodes_path or self.nodes_path
+                if self.nodes_path:
+                    start_time = time.time()
+                    log.info('Loading taxonomy nodes: %s', nodes_path)
+                    self.ranks, self.parents = self.load_nodes(nodes_path)
+                    log.info('Loaded taxonomy nodes: %.2fs', time.time() - start_time)
         if load_names:
             if names:
                 self.names = names
-            elif names_path:
-                start_time = time.time()
-                log.info('Loading taxonomy names: %s', names_path)
-                self.names = self.load_names(names_path, scientific_only=scientific_names_only)
-                log.info('Loaded taxonomy names: %.2fs', time.time() - start_time)
+            else:
+                if tax_dir:
+                    self.names_path = maybe_compressed(join(tax_dir, 'names.dmp'))
+                self.names_path = names_path or self.names_path
+                if self.names_path:
+                    start_time = time.time()
+                    log.info('Loading taxonomy names: %s', names_path)
+                    self.names = self.load_names(names_path, scientific_only=scientific_names_only)
+                    log.info('Loaded taxonomy names: %.2fs', time.time() - start_time)
         if load_merged or load_merged is None and (load_nodes or load_names):
             if merged:
                 self.merged = merged
                 self.add_merged_links()
-            elif merged_path:
-                start_time = time.time()
-                log.info('Loading merged nodes: %s', merged_path)
-                self.merged = self.load_merged(merged_path)
-                self.add_merged_links()
-                log.info('Loaded merged nodes: %.2fs', time.time() - start_time)
+            else:
+                if tax_dir:
+                    self.merged_path = maybe_compressed(join(tax_dir, 'merged.dmp'))
+                self.merged_path = merged_path or self.merged_path
+
+                if self.merged_path:
+                    start_time = time.time()
+                    log.info('Loading merged nodes: %s', merged_path)
+                    self.merged = self.load_merged(merged_path)
+                    self.add_merged_links()
+                    log.info('Loaded merged nodes: %.2fs', time.time() - start_time)
 
         self._children = None
 
