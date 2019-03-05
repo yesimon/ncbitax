@@ -1,4 +1,5 @@
 import collections
+import csv
 import logging
 import os
 from os.path import join
@@ -42,10 +43,14 @@ class TaxonomyDb(object):
         load_gis=False,
         load_nodes=False,
         load_names=False,
-        load_merged=None,
+        load_merged=True,
         scientific_names_only=None,
     ):
         self.tax_dir = tax_dir
+        self.gis_paths = gis_paths
+        self.nodes_path = nodes_path
+        self.names_path = names_path
+        self.merged_path = merged_path
         if load_gis:
             if gis:
                 self.gis = gis
@@ -85,7 +90,7 @@ class TaxonomyDb(object):
                     log.info('Loading taxonomy names: %s', self.names_path)
                     self.names = self.load_names(self.names_path, scientific_only=scientific_names_only)
                     log.info('Loaded taxonomy names: %.2fs', time.time() - start_time)
-        if load_merged or load_merged is None and (load_nodes or load_names):
+        if load_merged:
             if merged:
                 self.merged = merged
                 self.add_merged_links()
