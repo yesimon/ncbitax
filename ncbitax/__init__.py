@@ -7,11 +7,12 @@ import time
 
 log = logging.getLogger()
 
+
 class TaxIdError(ValueError):
     '''Taxonomy ID couldn't be determined.'''
 
 
-def open_or_gzopen(fname, *opts):
+def compressed_open(fname, *opts):
     return fname.endswith('.gz') and gzip.open(fname, *opts) or open(fname, *opts)
 
 
@@ -44,17 +45,18 @@ class TaxonomyDb(object):
         load_merged=None,
         scientific_names_only=None,
     ):
+        self.tax_dir = tax_dir
         if load_gis:
             if gis:
                 self.gis = gis
             else:
                 if tax_dir:
                     self.gis_paths = [maybe_compressed(join(tax_dir, 'gi_taxid_nucl.dmp')),
-                                maybe_compressed(join(tax_dir, 'gi_taxid_prot.dmp'))]
+                                      maybe_compressed(join(tax_dir, 'gi_taxid_prot.dmp'))]
                 self.gis_paths = gis_paths or self.gis_paths
                 if self.gis_paths:
                     self.gis = {}
-                    for gi_path in gis_paths:
+                    for gi_path in self.gis_paths:
                         start_time = time.time()
                         log.info('Loading taxonomy gis: %s', gi_path)
                         self.gis.update(self.load_gi_single_dmp(gi_path))
@@ -68,8 +70,8 @@ class TaxonomyDb(object):
                 self.nodes_path = nodes_path or self.nodes_path
                 if self.nodes_path:
                     start_time = time.time()
-                    log.info('Loading taxonomy nodes: %s', nodes_path)
-                    self.ranks, self.parents = self.load_nodes(nodes_path)
+                    log.info('Loading taxonomy nodes: %s', self.nodes_path)
+                    self.ranks, self.parents = self.load_nodes(self.nodes_path)
                     log.info('Loaded taxonomy nodes: %.2fs', time.time() - start_time)
         if load_names:
             if names:
@@ -80,8 +82,8 @@ class TaxonomyDb(object):
                 self.names_path = names_path or self.names_path
                 if self.names_path:
                     start_time = time.time()
-                    log.info('Loading taxonomy names: %s', names_path)
-                    self.names = self.load_names(names_path, scientific_only=scientific_names_only)
+                    log.info('Loading taxonomy names: %s', self.names_path)
+                    self.names = self.load_names(self.names_path, scientific_only=scientific_names_only)
                     log.info('Loaded taxonomy names: %.2fs', time.time() - start_time)
         if load_merged or load_merged is None and (load_nodes or load_names):
             if merged:
@@ -94,8 +96,8 @@ class TaxonomyDb(object):
 
                 if self.merged_path:
                     start_time = time.time()
-                    log.info('Loading merged nodes: %s', merged_path)
-                    self.merged = self.load_merged(merged_path)
+                    log.info('Loading merged nodes: %s', self.merged_path)
+                    self.merged = self.load_merged(self.merged_path)
                     self.add_merged_links()
                     log.info('Loaded merged nodes: %.2fs', time.time() - start_time)
 
@@ -104,7 +106,7 @@ class TaxonomyDb(object):
     def load_gi_single_dmp(self, dmp_path):
         '''Load a gi->taxid dmp file from NCBI taxonomy.'''
         gi_array = {}
-        with open_or_gzopen(dmp_path) as f:
+        with compressed_open(dmp_path) as f:
             for i, line in enumerate(f):
                 gi, taxid = line.strip().split('\t')
                 gi = int(gi)
@@ -121,7 +123,7 @@ class TaxonomyDb(object):
             names = {}
         else:
             names = collections.defaultdict(list)
-        for line in open_or_gzopen(names_db):
+        for line in compressed_open(names_db):
             parts = line.strip().split('|')
             taxid = int(parts[0])
             name = parts[1].strip()
@@ -138,7 +140,7 @@ class TaxonomyDb(object):
         '''Load ranks and parents arrays from NCBI taxonomy.'''
         ranks = {}
         parents = {}
-        with open_or_gzopen(nodes_db) as f:
+        with compressed_open(nodes_db) as f:
             for line in f:
                 parts = line.strip().split('|')
                 taxid = int(parts[0])
@@ -153,7 +155,7 @@ class TaxonomyDb(object):
     def load_merged(self, merged_db):
         '''Load taxonomy nodes that have been merged with other nodes.'''
         merged = {}
-        with open_or_gzopen(merged_db) as f:
+        with compressed_open(merged_db) as f:
             for line in f:
                 parts = line.strip().split('|')
                 from_taxid = int(parts[0])
@@ -213,7 +215,7 @@ class TaxonomyDb(object):
         for child_taxid in self.children[taxid]:
             cum_hits += self.kraken_dfs(lines, taxa_hits, total_hits, child_taxid, level + 1)
         percent_covered = '%.2f' % (cum_hits / total_hits * 100)
-        rank = rank_code(self.ranks[taxid])
+        rank = kraken_rank_code(self.ranks[taxid])
         name = self.names[taxid]
         if cum_hits > 0:
             lines.append('\t'.join([percent_covered, str(cum_hits), str(num_hits), rank, str(taxid), '  ' * level + name]))
@@ -261,7 +263,7 @@ def coverage_lca(query_ids, parents, lca_percent=None):
     return last_common
 
 
-def rank_code(rank):
+def kraken_rank_code(rank):
     '''Get the kraken-based short 1 letter rank code for named ranks.'''
     if rank == 'species':
         return 'S'
@@ -283,7 +285,7 @@ def rank_code(rank):
         return '-'
 
 
-def taxa_hits_from_tsv(f, taxid_column=3):
+def taxa_hits_from_tsv(f, taxid_column=2):
     '''Return a counter of hits from tsv.'''
     c = collections.Counter()
     for row in csv.reader(f, delimiter='\t'):
