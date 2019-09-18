@@ -1,3 +1,4 @@
+import argparse
 import collections
 import csv
 import logging
@@ -5,6 +6,8 @@ import os
 from os.path import join
 import gzip
 import time
+
+from .algo import *
 
 log = logging.getLogger()
 
@@ -25,6 +28,17 @@ def maybe_compressed(fn):
         return fn_gz
     else:
         raise FileNotFoundError(fn)
+
+
+def add_taxonomy_arguments(parser=None):
+    if not parser:
+        parser = argparse.ArgumentParser()
+    parser.add_argument('--tax-dir', help='Directory of taxonomy db.')
+    parser.add_argument('--tax-nodes', help='Taxonomy db nodes file.')
+    parser.add_argument('--tax-names', help='Taxonomy db names file.')
+    parser.add_argument('--tax-merged', help='Taxonomy db merged file.')
+    parser.add_argument('--tax-gis', nargs='+', help='Taxonomy db gi to taxid file.')
+    return parser
 
 
 class TaxonomyDb(object):
@@ -51,14 +65,18 @@ class TaxonomyDb(object):
         self.nodes_path = nodes_path
         self.names_path = names_path
         self.merged_path = merged_path
+        self.missing_parents = set()
         if load_gis:
             if gis:
                 self.gis = gis
             else:
-                if tax_dir:
+                if gis_paths:
+                    self.gis_paths = gis_paths
+                elif tax_dir:
                     self.gis_paths = [maybe_compressed(join(tax_dir, 'gi_taxid_nucl.dmp')),
                                       maybe_compressed(join(tax_dir, 'gi_taxid_prot.dmp'))]
-                self.gis_paths = gis_paths or self.gis_paths
+                else:
+                    self.gis_paths = None
                 if self.gis_paths:
                     self.gis = {}
                     for gi_path in self.gis_paths:
@@ -70,9 +88,12 @@ class TaxonomyDb(object):
             if nodes:
                 self.ranks, self.parents = nodes
             else:
-                if tax_dir:
+                if nodes_path:
+                    self.nodes_path = nodes_path
+                elif tax_dir:
                     self.nodes_path = maybe_compressed(join(tax_dir, 'nodes.dmp'))
-                self.nodes_path = nodes_path or self.nodes_path
+                else:
+                    self.nodes_path = None
                 if self.nodes_path:
                     start_time = time.time()
                     log.info('Loading taxonomy nodes: %s', self.nodes_path)
@@ -82,9 +103,12 @@ class TaxonomyDb(object):
             if names:
                 self.names = names
             else:
-                if tax_dir:
+                if names_path:
+                    self.names_path = names_path
+                elif tax_dir:
                     self.names_path = maybe_compressed(join(tax_dir, 'names.dmp'))
-                self.names_path = names_path or self.names_path
+                else:
+                    self.names_path = None
                 if self.names_path:
                     start_time = time.time()
                     log.info('Loading taxonomy names: %s', self.names_path)
@@ -95,9 +119,12 @@ class TaxonomyDb(object):
                 self.merged = merged
                 self.add_merged_links()
             else:
-                if tax_dir:
+                if merged_path:
+                    self.merged_path = merged_path
+                elif tax_dir:
                     self.merged_path = maybe_compressed(join(tax_dir, 'merged.dmp'))
-                self.merged_path = merged_path or self.merged_path
+                else:
+                    self.merged_path = None
 
                 if self.merged_path:
                     start_time = time.time()
@@ -138,7 +165,10 @@ class TaxonomyDb(object):
                 if class_ == 'scientific name':
                     names[taxid] = name
             else:
-                names[taxid].append(name)
+                if class_ == 'scientific name':
+                    names[taxid].insert(0, name)
+                else:
+                    names[taxid].append(name)
         return names
 
     def load_nodes(self, nodes_db):
@@ -178,6 +208,14 @@ class TaxonomyDb(object):
             if self.parents:
                 self.parents[from_node] = self.parents[to_node]
 
+    @classmethod
+    def from_args(cls, parser_args, *args, **kwargs):
+        return cls(tax_dir=parser_args.tax_dir,
+                   nodes_path=parser_args.tax_nodes,
+                   names_path=parser_args.tax_names,
+                   merged_path=parser_args.tax_merged,
+                   *args, **kwargs)
+
     @property
     def children(self):
         if self._children:
@@ -186,24 +224,40 @@ class TaxonomyDb(object):
         return self._children
 
     def coverage_lca(self, query_ids, lca_percent=None):
-        return coverage_lca(query_ids, self.parents, lca_percent=lca_percent)
+        return coverage_lca(query_ids, self.parents, lca_percent=lca_percent,
+                            missing_parents=self.missing_parents)
 
-    def kraken_dfs_report(self, taxa_hits):
+    def parent_path(self, query_id, root_id=1, cache=None, warn_missing=True):
+        return parent_path(query_id, self.parents, root_id=root_id, cache=cache, warn_missing=warn_missing,
+                           missing_parents=self.missing_parents)
+
+    def kraken_dfs_report(self, taxa_hits, total_reads=None):
         '''Return a kraken compatible DFS report of taxa hits.
 
         Args:
         db: (TaxonomyDb) Taxonomy db.
         taxa_hits: (collections.Counter) # of hits per tax id.
+        total_reads: (int) Total reads (add to unclassified if taxa_hits is less)
 
         Return:
         []str lines of the report
         '''
-
         total_hits = sum(taxa_hits.values())
         lines = []
-        self.kraken_dfs(lines, taxa_hits, total_hits, 1, 0)
-        unclassified_hits = taxa_hits.get(0, 0)
+        if total_reads is not None:
+            if total_reads >= total_hits:
+                unclassified_hits = total_reads - total_hits
+                total_hits = total_reads
+            elif total_reads < total_hits:
+                raise Exception('Total reads given is < number of hits in the report.')
+        else:
+            unclassified_hits = 0
+
+        unclassified_hits += taxa_hits.get(0, 0)
         unclassified_hits += taxa_hits.get(-1, 0)
+
+        self.kraken_dfs(lines, taxa_hits, total_hits, 1, 0)
+
         if unclassified_hits > 0:
             percent_covered = '%.2f' % (unclassified_hits / total_hits * 100)
             lines.append(
@@ -225,47 +279,6 @@ class TaxonomyDb(object):
         if cum_hits > 0:
             lines.append('\t'.join([percent_covered, str(cum_hits), str(num_hits), rank, str(taxid), '  ' * level + name]))
         return cum_hits
-
-
-def coverage_lca(query_ids, parents, lca_percent=None):
-    '''Calculate the lca that will cover at least this percent of queries.
-
-    Args:
-      query_ids: []int list of nodes.
-      parents: []int array of parents.
-      lca_percent: (float) Cover at least this percent of queries.
-
-    Return:
-      (int) LCA
-    '''
-    lca_percent = lca_percent or 100
-    lca_needed = lca_percent / 100 * len(query_ids)
-    paths = []
-    for query_id in query_ids:
-        path = []
-        while query_id != 1:
-            path.append(query_id)
-            if parents[query_id] == 0:
-                log.warn('Parent for query id: {} missing'.format(query_id))
-                break
-            query_id = parents[query_id]
-        if query_id == 1:
-            path.append(1)
-            path = list(reversed(path))
-            paths.append(path)
-    if not paths:
-        return
-
-    last_common = 1
-    max_path_length = max(len(path) for path in paths)
-    for level in range(max_path_length):
-        valid_paths = (path for path in paths if len(path) > level)
-        max_query_id, hits_covered = collections.Counter(path[level] for path in valid_paths).most_common(1)[0]
-        if hits_covered >= lca_needed:
-            last_common = max_query_id
-        else:
-            break
-    return last_common
 
 
 def kraken_rank_code(rank):
