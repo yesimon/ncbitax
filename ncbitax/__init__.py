@@ -255,8 +255,8 @@ class TaxonomyDb(object):
 
         unclassified_hits += taxa_hits.get(0, 0)
         unclassified_hits += taxa_hits.get(-1, 0)
-
-        self.kraken_dfs(lines, taxa_hits, total_hits, 1, 0)
+        if total_hits:
+            self.kraken_dfs(lines, taxa_hits, total_hits, 1, 0)
 
         if unclassified_hits > 0:
             percent_covered = '%.2f' % (unclassified_hits / total_hits * 100)

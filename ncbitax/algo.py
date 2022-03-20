@@ -3,6 +3,7 @@ import logging
 
 log = logging.getLogger()
 
+
 def parent_path(query_id, parents, root_id=1, cache=None, warn_missing=True,
                 missing_parents=None):
     '''Calculate the path to the root taxon or a specific taxon.
@@ -35,6 +36,7 @@ def parent_path(query_id, parents, root_id=1, cache=None, warn_missing=True,
     if cache is not None:
         cache[query_id] = result
     return result
+
 
 def coverage_lca(query_ids, parents, lca_percent=None, missing_parents=None):
     '''Calculate the lca that will cover at least this percent of queries.
